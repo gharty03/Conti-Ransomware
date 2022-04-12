@@ -1,0 +1,11 @@
+{
+  "ExpandedNodes": [
+    "",
+    "\\decryptor",
+    "\\locker",
+    "\\locker\\antihook",
+    "\\locker\\chacha20"
+  ],
+  "SelectedNode": "\\locker\\chacha20\\chacha.h",
+  "PreviewInSolutionExplorer": false
+}
