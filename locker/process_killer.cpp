@@ -6,7 +6,7 @@
 VOID
 process_killer::KillAll(__out PPID_LIST PidList)
 {
-	/*
+	
 	HANDLE hSnapShot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
 	if (hSnapShot == NULL) {
 		return;
@@ -94,7 +94,7 @@ process_killer::KillAll(__out PPID_LIST PidList)
 	} while (Process32NextW(hSnapShot, &pe32));
 
 	pCloseHandle(hSnapShot);
-	*/
+	
 }
 
 VOID 
